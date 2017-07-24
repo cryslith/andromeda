@@ -1,97 +1,96 @@
-#!/usr/bin/python
+#!/usr/bin/python3
 
 
-import zephyr
-import re
+import json
 import requests
 import time
+import zpipe
 
 
-name = "andromeda"
-blocklist = []
-room = "ROOM"
-largeroom = "LARGEROOM"
-user = "USER"
-realm = "ATHENA.MIT.EDU"
+class Andromeda(object):
+    def __init__(self, options):
+        self.name = options.get('name', 'andromeda')
+        self.zsig = options.get('zsig', 'a galaxy of stars within me')
+        self.blocklist = options.get('blocklist', [])
+        self.room = options['room']
+        self.largeroom = options.get('largeroom', None)
+        self.user = options['user']
+        self.realm = options.get('realm', 'ATHENA.MIT.EDU')
+        self.pushover_token = options['pushover_token']
+        self.pushover_user = options['pushover_user']
 
-def info(cls, instance, message):
-    nn = zephyr.ZNotice()
-    nn.cls = cls
-    nn.instance = instance
-    nn.sender = name
-    nn.fields.append(message)
-    nn.send()
+        self.last_time = time.time()
 
-def mainloop(cb):
-    subs = zephyr.Subscriptions()
-    subs.add((room,"*","*"))
-    subs.add(("SANDBOX","*","*"))
-    subs.add((largeroom,"*","*"))
-    while True:
-		notice = zephyr.receive(True)
-		if "@" not in notice.sender: continue
-		sender, foundrealm = notice.sender.split("@")
-		if realm == foundrealm and notice.auth:
-			cb(notice.cls, notice.instance, sender, notice.fields[-1])
+        self.zp = zpipe.ZPipe(["zpipe"], self.check_zgram)
+        self.zp.subscribe(self.room)
+        if self.largeroom:
+            self.zp.subscribe(self.largeroom)
 
-last_time = time.time()
-def check_rate():
-	global last_time
-	if last_time + 5 <= time.time():
-		last_time = time.time()
-		return True
-	else:
-		return False
+    def info(self, cls, instance, message):
+        nn = zpipe.Zephyrgram(self.name, cls, instance, None, 'auto', False,
+                              [self.zsig, message])
+        self.zp.zwrite(nn)
 
-def handle(cls, instance, sender, message):
-	if (cls == room and instance == name) or cls == largeroom:
-		if sender in blocklist:
-			info(cls, instance, sender + ": you are blocked from sending notifications to " + user)
-		elif check_rate():
-			if cls == largeroom and sender == user:
-				send = "%s: %s" % (instance, message)
-			else:
-				send = "%s-%s: %s" % (sender, instance, message)
-			resp = requests.post("https://api.pushover.net/1/messages.json", data={"token": "<TOKEN>", "user": "<USER>", "message": send})
-			if resp.status_code == 200:
-				info(cls, instance, "notification sent to " + user)
-			elif resp.status_code >= 400 and resp.status_code <= 499:
-				info(cls, instance, user + " could not be notified; do not try again")
-			else:
-				info(cls, instance, user + " could not be notified; try again later")
-		else:
-			info(cls, instance, user + " could not be notified; try again later")
-	elif (cls == room or cls == "SANDBOX") and sender == user:
-		message = message.replace("\n", " ").replace("\t", " ").strip()
-		while "  " in message:
-			message = message.replace("  ", " ")
-		match = re.match("^(i,i )?\"([^\"]+)\"$", message)
-		if match:
-			message = match.group(2)
-		match = re.match("^[(]([^()]+)[)]$", message)
-		if match:
-			message = match.group(1)
-		if message.startswith("I suppose "):
-			message = message.split(" ",2)[2]
-		if message.startswith("I think "):
-			message = message.split(" ",2)[2]
-		if message.lower().startswith("okay ") or message.startswith("okay, "):
-			message = message.split(" ",1)[1]
-		match = re.match("^[Oo]+(h|ps) ([a-zA-Z0-9 :]+)$", message)
-		if match:
-			message = match.group(2)
-		if message.lower().startswith("maybe "):
-			message = message.split(" ",1)[1]
-		if message.lower().startswith("speaking of which "):
-			message = message.split(" ",3)[3]
-		match = re.match("^I should (really|probably) ([a-z A-Z0-9:]+)( tbh| at some point)?[.]*$", message)
-		if match:
-			time.sleep(2)
-			info(cls, instance, match.group(2)[0].upper() + match.group(2)[1:] + "!")
-		else:
-			match = re.match("^I should be doing ([a-z A-Z0-9:]+)( tbh| at some point)?[.]*$", message)
-			if match:
-				time.sleep(2)
-				info(cls, instance, "Do " + match.group(1) + "!")
+    def check_zgram(self, _, zgram):
+        cls = zgram.cls.lower()
+        instance = zgram.instance.lower()
+        try:
+            sender, foundrealm = zgram.sender.split("@")
+            _, message = zgram.fields
+        except ValueError:
+            return
 
-mainloop(handle)
+        if foundrealm != self.realm or not zgram.auth:
+            return
+        if 'auto' in zgram.opcode.lower():
+            return
+
+        self.handle(cls, instance, sender, message)
+
+    def check_rate(self):
+        if self.last_time + 5 <= time.time():
+            self.last_time = time.time()
+            return True
+        else:
+            return False
+
+    def handle(self, cls, instance, sender, message):
+        if ((cls == self.room and instance == self.name) or
+            cls == self.largeroom):
+            if sender in self.blocklist:
+                self.info(cls, instance,
+                     '{}: you are blocked from sending notifications '
+                     'to {}'. format(sender, self.user))
+                return
+            if not self.check_rate():
+                self.info(cls, instance,
+                     "{} could not be notified; try again later".format(self.user))
+                return
+
+            if cls == self.largeroom and sender == self.user:
+                send = '{}: {}'.format(instance, message)
+            else:
+                send = '{}-{}: {}'.format(sender, instance, message)
+            resp = requests.post("https://api.pushover.net/1/messages.json",
+                                 data={"token": self.pushover_token,
+                                       "user": self.pushover_user,
+                                       "message": send})
+            if resp.status_code == 200:
+                self.info(cls, instance, "notification sent to {}".format(self.user))
+            elif resp.status_code >= 400 and resp.status_code <= 499:
+                self.info( cls, instance,
+                     "{} could not be notified; do not try again".format(self.user))
+            else:
+                self.info(cls, instance,
+                     "{} could not be notified; try again later".format(self.user))
+            return
+
+
+def main():
+    with open('andromeda.json') as f:
+        options = json.load(f)
+    Andromeda(options)
+
+
+if __name__ == '__main__':
+    main()
