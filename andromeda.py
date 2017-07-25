@@ -1,6 +1,7 @@
 #!/usr/bin/python3
 
 
+import argparse
 import json
 import requests
 import time
@@ -109,7 +110,10 @@ class Andromeda(object):
 
 
 def main():
-    with open('andromeda.json') as f:
+    argparser = argparse.ArgumentParser()
+    argparser.add_argument('-c', '--config-file', default='andromeda.json')
+    args = argparser.parse_args()
+    with open(args.config_file) as f:
         options = json.load(f)
     Andromeda(options)
 
