@@ -5,6 +5,10 @@
     "pushover_user": "<pushover user key>",
     "blocklist": ["voldemort", "diobrando"], // optional
     "priority": true, // remove to disable priority notifications
+    // interval in seconds at which pages will be retried.  min + default: 30
+    "retry": 60,
+    // seconds after which to give up on pages.  default 600, max 10800
+    "expire": 300,
     "name": "<my name here>", // default: andromeda
     "zsig": "insert witty zsig", // default: a galaxy of stars within me
     "room": "<class to listen on here>", // default: same as username

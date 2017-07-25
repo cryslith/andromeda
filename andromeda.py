@@ -2,11 +2,24 @@
 
 
 import argparse
+import contextlib
 import json
 import requests
 import sys
+import threading
 import time
 import zpipe
+
+
+@contextlib.contextmanager
+def nonblocking(lock):
+    if not lock.acquire(blocking=False):
+        yield False
+        return
+    try:
+        yield lock
+    finally:
+        lock.release()
 
 
 class Andromeda(object):
@@ -25,6 +38,7 @@ class Andromeda(object):
         self.largeroom = options.get('largeroom', None)
 
         self.last_time = time.time()
+        self.page_lock = threading.Lock()
 
         self.zp = zpipe.ZPipe(['zpipe'], self.handle)
         self.zp.subscribe(self.room)
@@ -79,6 +93,11 @@ class Andromeda(object):
                       'to {}'.format(sender, self.user))
             return
 
+        if cls == self.largeroom and sender == self.user:
+            notification = '{}: {}'.format(instance, message)
+        else:
+            notification = '{}-{}: {}'.format(sender, instance, message)
+
         priority = 2 if 'page' in opcode else 1 if 'urgent' in opcode else 0
         note_type = {0: 'notification',
                      1: 'urgent notification',
@@ -92,30 +111,76 @@ class Andromeda(object):
             self.reject_info(cls, instance, True)
             return
 
-        if cls == self.largeroom and sender == self.user:
-            notification = '{}: {}'.format(instance, message)
-        else:
-            notification = '{}-{}: {}'.format(sender, instance, message)
+        if priority == 2:
+            self.page(cls, instance, notification)
+            return
 
         request = {'token': self.pushover_token,
                    'user': self.pushover_user,
                    'message': notification,
                    'priority': priority}
-        if priority == 2:
-            request.update({'retry': self.retry,
-                            'expire': self.expire})
-
         resp = requests.post(
             'https://api.pushover.net/1/messages.json',
             data=request)
-
         if resp.status_code == 200:
             self.success_info(cls, instance, note_type)
         elif resp.status_code >= 400 and resp.status_code <= 499:
-            print(resp.json(), file=sys.stderr)
+            print(resp.text, file=sys.stderr)
             self.reject_info(cls, instance, False)
         else:
             self.reject_info(cls, instance, True)
+
+    def page(self, cls, instance, notification):
+        with nonblocking(self.page_lock) as locked:
+            if not locked:
+                self.info(cls, instance,
+                          '{} is already being paged'.format(self.user))
+                return
+            request = {'token': self.pushover_token,
+                       'user': self.pushover_user,
+                       'message': notification,
+                       'priority': 2,
+                       'retry': self.retry,
+                       'expire': self.expire}
+            resp = requests.post(
+                'https://api.pushover.net/1/messages.json',
+                data=request)
+            if resp.status_code == 200:
+                self.success_info(cls, instance, 'page')
+                try:
+                    receipt = resp.json()['receipt']
+                except (ValueError, KeyError):
+                    print(resp.text, file=sys.stderr)
+                    return
+            elif resp.status_code >= 400 and resp.status_code <= 499:
+                print(resp.text, file=sys.stderr)
+                self.reject_info(cls, instance, False)
+                return
+            else:
+                self.reject_info(cls, instance, True)
+                return
+
+            start_time = time.time()
+            while time.time() < start_time + self.expire:
+                time.sleep(6)
+                resp = requests.get(
+                    'https://api.pushover.net/1/receipts/'
+                    '{}.json?token={}'.format(receipt, self.pushover_token))
+                if resp.status_code == 200:
+                    try:
+                        j = resp.json()
+                        if j['acknowledged']:
+                            self.info(cls, instance,
+                                      'page acknowledged by {}'.format(
+                                    self.user))
+                            return
+                    except (ValueError, KeyError):
+                        print(resp.text, file=sys.stderr)
+                        return
+                elif resp.status_code >= 400 and resp.status_code <= 499:
+                    print(resp.text, file=sys.stderr)
+                    return
+            self.info(cls, inst, 'page expired unacknowledged')
 
 
 def main():
