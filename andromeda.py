@@ -10,20 +10,20 @@ import zpipe
 
 class Andromeda(object):
     def __init__(self, options):
-        self.name = options.get('name', 'andromeda')
-        self.zsig = options.get('zsig', 'a galaxy of stars within me')
-        self.blocklist = options.get('blocklist', [])
-        self.room = options['room']
-        self.largeroom = options.get('largeroom', None)
         self.user = options['user']
         self.realm = options.get('realm', 'ATHENA.MIT.EDU')
         self.pushover_token = options['pushover_token']
         self.pushover_user = options['pushover_user']
+        self.blocklist = options.get('blocklist', [])
         self.priority = options.get('priority')
+        self.name = options.get('name', 'andromeda')
+        self.zsig = options.get('zsig', 'a galaxy of stars within me')
+        self.room = options.get('room', self.user)
+        self.largeroom = options.get('largeroom', None)
 
         self.last_time = time.time()
 
-        self.zp = zpipe.ZPipe(["zpipe"], self.handle)
+        self.zp = zpipe.ZPipe(['zpipe'], self.handle)
         self.zp.subscribe(self.room)
         if self.largeroom:
             self.zp.subscribe(self.largeroom)
@@ -56,19 +56,18 @@ class Andromeda(object):
         instance = zgram.instance.lower()
         opcode = zgram.opcode.lower()
 
+        if 'auto' in opcode:
+            return
         if not ((cls == self.room and instance == self.name) or
                 cls == self.largeroom):
             return
 
         try:
-            sender, foundrealm = zgram.sender.split("@")
+            sender, foundrealm = zgram.sender.split('@')
             _, message = zgram.fields
         except ValueError:
             return
-
         if foundrealm != self.realm or not zgram.auth:
-            return
-        if 'auto' in opcode:
             return
 
         if sender in self.blocklist:

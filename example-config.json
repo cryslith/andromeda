@@ -1,0 +1,12 @@
+{
+    "user": "<your username here>",
+    "realm": "<kerberos realm here>", // default: ATHENA.MIT.EDU
+    "pushover_token": "<pushover API token>",
+    "pushover_user": "<pushover user key>",
+    "blocklist": ["voldemort", "diobrando"], // optional
+    "priority": true, // remove to disable priority notifications
+    "name": "<my name here>", // default: andromeda
+    "zsig": "insert witty zsig", // default: a galaxy of stars within me
+    "room": "<class to listen on here>", // default: same as username
+    "largeroom": "<class to listen on all instances>" // optional
+}
