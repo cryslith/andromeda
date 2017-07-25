@@ -4,6 +4,7 @@
 import argparse
 import json
 import requests
+import sys
 import time
 import zpipe
 
@@ -16,6 +17,8 @@ class Andromeda(object):
         self.pushover_user = options['pushover_user']
         self.blocklist = options.get('blocklist', [])
         self.priority = options.get('priority')
+        self.retry = options.get('retry', 30)
+        self.expire = options.get('expire', 600)
         self.name = options.get('name', 'andromeda')
         self.zsig = options.get('zsig', 'a galaxy of stars within me')
         self.room = options.get('room', self.user)
@@ -76,9 +79,10 @@ class Andromeda(object):
                       'to {}'.format(sender, self.user))
             return
 
-        priority = 1 if 'urgent' in opcode else 0
+        priority = 2 if 'page' in opcode else 1 if 'urgent' in opcode else 0
         note_type = {0: 'notification',
-                     1: 'urgent notification'}[priority]
+                     1: 'urgent notification',
+                     2: 'page'}[priority]
         if priority > 0 and not self.priority:
             self.info(cls, instance,
                       '{} has disabled {}s'.format(self.user, note_type))
@@ -93,16 +97,22 @@ class Andromeda(object):
         else:
             notification = '{}-{}: {}'.format(sender, instance, message)
 
+        request = {'token': self.pushover_token,
+                   'user': self.pushover_user,
+                   'message': notification,
+                   'priority': priority}
+        if priority == 2:
+            request.update({'retry': self.retry,
+                            'expire': self.expire})
+
         resp = requests.post(
             'https://api.pushover.net/1/messages.json',
-            data={'token': self.pushover_token,
-                  'user': self.pushover_user,
-                  'message': notification,
-                  'priority': priority})
+            data=request)
 
         if resp.status_code == 200:
             self.success_info(cls, instance, note_type)
         elif resp.status_code >= 400 and resp.status_code <= 499:
+            print(resp.json(), file=sys.stderr)
             self.reject_info(cls, instance, False)
         else:
             self.reject_info(cls, instance, True)
